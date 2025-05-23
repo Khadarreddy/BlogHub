@@ -1,6 +1,26 @@
+// Firebase configuration
+const firebaseConfig = {
+  apiKey: "AIzaSyAjv0lHoQOMIGSBxkf7pBA9U5woijUGHnM",
+  authDomain: "bloghub-88c3c.firebaseapp.com",
+  projectId: "bloghub-88c3c",
+  storageBucket: "bloghub-88c3c.firebasestorage.app",
+  messagingSenderId: "511891899084",
+  appId: "1:511891899084:web:a4de09765c9b81e4ea3869"
+};
+
+// Initialize Firebase
+import { initializeApp } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-app.js";
+import { getAuth, createUserWithEmailAndPassword, signInWithEmailAndPassword, signOut } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-auth.js";
+import { getFirestore, collection, addDoc, getDocs, query, where, deleteDoc, doc, updateDoc, getDoc, setDoc } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js";
+
+const app = initializeApp(firebaseConfig);
+const auth = getAuth(app);
+const db = getFirestore(app);
+
 // Initialize Quill editor
 let quill;
 let currentUser = null;
+
 
 // DOM Elements
 const mainContent = document.getElementById('main-content');
@@ -14,6 +34,7 @@ const registerModal = document.getElementById('register-modal');
 const loginForm = document.getElementById('login-form');
 const registerForm = document.getElementById('register-form');
 const showRegisterLink = document.getElementById('show-register');
+const backBtn = document.getElementById('back-btn');
 
 // Page Elements
 const homePage = document.getElementById('home-page');
@@ -25,35 +46,24 @@ const dashboardPage = document.getElementById('dashboard-page');
 document.getElementById('show-write').addEventListener('click', showWritePage);
 document.getElementById('show-dashboard').addEventListener('click', showDashboard);
 document.getElementById('show-home').addEventListener('click', showHomePage);
+backBtn.addEventListener('click', showHomePage);
 
 // Simple logout functionality
-function handleLogout(e) {
+async function handleLogout(e) {
     if (e) e.preventDefault();
-    console.log('Logout function called'); // Debug log
-    
-    // Only clear user-related storage, not blogs
-    localStorage.removeItem('currentUser');
-    sessionStorage.removeItem('currentUser');
-    console.log('User storage cleared'); // Debug log
-    
-    // Reset user state
-    currentUser = null;
-    console.log('User state reset'); // Debug log
-    
-    // Reset UI
-    loginBtn.innerHTML = '<i class="fas fa-user"></i> Login';
-    loginBtn.style.display = 'inline-block';
-    logoutBtn.style.display = 'none';
-    document.getElementById('show-write').style.display = 'none';
-    document.getElementById('show-dashboard').style.display = 'none';
-    console.log('UI reset complete'); // Debug log
-    
-    // Clear any search input
-    searchInput.value = '';
-    
-    // Show home page with all blogs
-    showHomePage();
-    console.log('Logout process completed successfully'); // Debug log
+    try {
+        await signOut(auth);
+        currentUser = null;
+        loginBtn.innerHTML = '<i class="fas fa-user"></i> Login';
+        loginBtn.style.display = 'inline-block';
+        logoutBtn.style.display = 'none';
+        document.getElementById('show-write').style.display = 'none';
+        document.getElementById('show-dashboard').style.display = 'none';
+        searchInput.value = '';
+        showHomePage();
+    } catch (error) {
+        console.error('Logout error:', error);
+    }
 }
 
 // Add event listener to logout button
@@ -93,30 +103,36 @@ document.body.setAttribute('data-theme', savedTheme);
 themeToggle.innerHTML = savedTheme === 'dark' ? '<i class="fas fa-sun"></i>' : '<i class="fas fa-moon"></i>';
 
 // Authentication
-loginForm.addEventListener('submit', (e) => {
+loginForm.addEventListener('submit', async (e) => {
     e.preventDefault();
-    const username = document.getElementById('username').value;
+    const email = document.getElementById('username').value;
     const password = document.getElementById('password').value;
     
-    const users = JSON.parse(localStorage.getItem('users') || '[]');
-    const user = users.find(u => u.username === username && u.password === password);
-    
-    if (user) {
-        console.log('Login successful for:', username); // Debug log
-        currentUser = user;
-        localStorage.setItem('currentUser', JSON.stringify(user));
+    try {
+        const userCredential = await signInWithEmailAndPassword(auth, email, password);
+        // Fetch username from Firestore
+        const userDoc = await getDoc(doc(db, "users", userCredential.user.uid));
+        if (userDoc.exists()) {
+            currentUser = {
+                ...userCredential.user,
+                username: userDoc.data().username
+            };
+        } else {
+            currentUser = userCredential.user;
+        }
         loginModal.style.display = 'none';
         updateAuthUI();
         showHomePage();
-    } else {
-        console.log('Login failed for:', username); // Debug log
+    } catch (error) {
+        console.error('Login error:', error);
         alert('Invalid credentials!');
     }
 });
 
-registerForm.addEventListener('submit', (e) => {
+registerForm.addEventListener('submit', async (e) => {
     e.preventDefault();
-    const username = document.getElementById('new-username').value;
+    const username = document.getElementById('register-username').value;
+    const email = document.getElementById('new-username').value;
     const password = document.getElementById('new-password').value;
     const confirmPassword = document.getElementById('confirm-password').value;
     
@@ -125,16 +141,21 @@ registerForm.addEventListener('submit', (e) => {
         return;
     }
     
-    const users = JSON.parse(localStorage.getItem('users') || '[]');
-    if (users.some(u => u.username === username)) {
-        alert('Username already exists!');
-        return;
+    try {
+        const userCredential = await createUserWithEmailAndPassword(auth, email, password);
+        currentUser = userCredential.user;
+        // Save username in Firestore
+        await setDoc(doc(db, "users", userCredential.user.uid), {
+            username: username,
+            email: email
+        });
+        registerModal.style.display = 'none';
+        loginModal.style.display = 'block';
+        alert('Registration successful! Please login.');
+    } catch (error) {
+        console.error('Registration error:', error);
+        alert('Registration failed: ' + error.message);
     }
-    
-    users.push({ username, password });
-    localStorage.setItem('users', JSON.stringify(users));
-    registerModal.style.display = 'none';
-    loginModal.style.display = 'block';
 });
 
 function showRegister() {
@@ -145,7 +166,7 @@ function showRegister() {
 function updateAuthUI() {
     console.log('Updating UI, currentUser:', currentUser); // Debug log
     if (currentUser) {
-        loginBtn.innerHTML = `<i class="fas fa-user"></i> ${currentUser.username}`;
+        loginBtn.innerHTML = `<i class="fas fa-user"></i> ${currentUser.username || currentUser.email}`;
         logoutBtn.style.display = 'inline-block';
         document.getElementById('show-write').style.display = 'flex';
         document.getElementById('show-dashboard').style.display = 'flex';
@@ -167,51 +188,65 @@ function showPage(page) {
 }
 
 // Blog Functions
-function showHomePage() {
-    const blogs = JSON.parse(localStorage.getItem('blogs') || '[]');
-    const blogsContainer = homePage.querySelector('.blogs-container');
-    blogsContainer.innerHTML = blogs.map(blog => createBlogCard(blog)).join('');
-    
-    // Add click event listeners to blog cards
-    document.querySelectorAll('.blog-card').forEach(card => {
-        card.addEventListener('click', () => {
-            const blogId = card.dataset.id;
-            showBlogDetails(blogId);
-        });
-    });
-    
-    showPage(homePage);
+async function showHomePage() {
+    try {
+        const blogsSnapshot = await getDocs(collection(db, 'blogs'));
+        const blogs = blogsSnapshot.docs.map(doc => ({
+            id: doc.id,
+            ...doc.data()
+        }));
+        
+        const blogsContainer = homePage.querySelector('.blogs-container');
+        blogsContainer.innerHTML = blogs.map(blog => createBlogCard(blog)).join('');
+        
+        setupBlogCardEvents();
+        showPage(homePage);
+    } catch (error) {
+        console.error('Error fetching blogs:', error);
+        alert('Error loading blogs');
+    }
 }
 
-function showBlogDetails(blogId) {
-    const blogs = JSON.parse(localStorage.getItem('blogs') || '[]');
-    const blog = blogs.find(b => b.id === blogId);
-    
-    if (!blog) return;
-    
-    // Increment view count
-    blog.views = (blog.views || 0) + 1;
-    localStorage.setItem('blogs', JSON.stringify(blogs));
-    
-    const detailsContent = blogDetailsPage.querySelector('.blog-details-content');
-    detailsContent.innerHTML = `
-        <div class="blog-details-header">
-            <h1 class="blog-details-title">${blog.title}</h1>
-            <div class="blog-details-meta">
-                <span><i class="fas fa-user"></i> ${blog.author}</span>
-                <span><i class="fas fa-calendar"></i> ${new Date(blog.date).toLocaleDateString()}</span>
-                <span><i class="fas fa-eye"></i> ${blog.views}</span>
+async function showBlogDetails(blogId) {
+    try {
+        const blogsSnapshot = await getDocs(collection(db, 'blogs'));
+        const blogs = blogsSnapshot.docs.map(doc => ({
+            id: doc.id,
+            ...doc.data()
+        }));
+        const blog = blogs.find(b => b.id === blogId);
+        
+        if (!blog) return;
+        
+        // Increment view count
+        const blogRef = doc(db, 'blogs', blogId);
+        await updateDoc(blogRef, {
+            views: (blog.views || 0) + 1
+        });
+        
+        const detailsContent = blogDetailsPage.querySelector('.blog-details-content');
+        detailsContent.innerHTML = `
+            <div class="blog-details-header">
+                <h1 class="blog-details-title">${blog.title}</h1>
+                <div class="blog-details-meta">
+                    <span><i class="fas fa-user"></i> ${blog.author}</span>
+                    <span><i class="fas fa-calendar"></i> ${new Date(blog.date).toLocaleDateString()}</span>
+                    <span><i class="fas fa-eye"></i> ${blog.views || 0}</span>
+                </div>
             </div>
-        </div>
-        <div class="blog-details-body">
-            ${blog.content}
-        </div>
-        <div class="blog-details-tags">
-            ${blog.tags.map(tag => `<span class="tag">${tag}</span>`).join('')}
-        </div>
-    `;
-    
-    showPage(blogDetailsPage);
+            <div class="blog-details-body">
+                ${blog.content}
+            </div>
+            <div class="blog-details-tags">
+                ${blog.tags.map(tag => `<span class="tag">${tag}</span>`).join('')}
+            </div>
+        `;
+        
+        showPage(blogDetailsPage);
+    } catch (error) {
+        console.error('Error showing blog details:', error);
+        alert('Error loading blog details');
+    }
 }
 
 function showWritePage() {
@@ -261,51 +296,56 @@ function showWritePage() {
     showPage(writePage);
 }
 
-function showDashboard() {
+async function showDashboard() {
     if (!currentUser) {
         alert('Please login to view dashboard!');
         return;
     }
     
-    const blogs = JSON.parse(localStorage.getItem('blogs') || '[]');
-    const userBlogs = blogs.filter(blog => blog.author === currentUser.username);
-    
-    dashboardPage.innerHTML = `
-        <div class="dashboard">
-            <h2>Dashboard</h2>
-            <div class="dashboard-stats">
-                <div class="stat-card">
-                    <h3>Total Posts</h3>
-                    <p>${userBlogs.length}</p>
+    try {
+        const blogsQuery = query(
+            collection(db, 'blogs'),
+            where('author', '==', currentUser.email)
+        );
+        const blogsSnapshot = await getDocs(blogsQuery);
+        const userBlogs = blogsSnapshot.docs.map(doc => ({
+            id: doc.id,
+            ...doc.data()
+        }));
+        
+        dashboardPage.innerHTML = `
+            <div class="dashboard">
+                <h2>Dashboard</h2>
+                <div class="dashboard-stats">
+                    <div class="stat-card">
+                        <h3>Total Posts</h3>
+                        <p>${userBlogs.length}</p>
+                    </div>
+                    <div class="stat-card">
+                        <h3>Total Views</h3>
+                        <p>${userBlogs.reduce((sum, blog) => sum + (blog.views || 0), 0)}</p>
+                    </div>
                 </div>
-                <div class="stat-card">
-                    <h3>Total Views</h3>
-                    <p>${userBlogs.reduce((sum, blog) => sum + (blog.views || 0), 0)}</p>
+                <h3>Your Posts</h3>
+                <div class="blogs-container">
+                    ${userBlogs.map(blog => createBlogCard(blog, true)).join('')}
                 </div>
             </div>
-            <h3>Your Posts</h3>
-            <div class="blogs-container">
-                ${userBlogs.map(blog => createBlogCard(blog, true)).join('')}
-            </div>
-        </div>
-    `;
-    
-    // Add click event listeners to blog cards
-    document.querySelectorAll('.blog-card').forEach(card => {
-        card.addEventListener('click', () => {
-            const blogId = card.dataset.id;
-            showBlogDetails(blogId);
-        });
-    });
-    
-    showPage(dashboardPage);
+        `;
+        
+        setupBlogCardEvents();
+        showPage(dashboardPage);
+    } catch (error) {
+        console.error('Error loading dashboard:', error);
+        alert('Error loading dashboard');
+    }
 }
 
 function createBlogCard(blog, isDashboard = false) {
     return `
         <div class="blog-card" data-id="${blog.id}">
-            ${currentUser && currentUser.username === blog.author ? `
-                <button class="delete-btn" onclick="handleDelete(event, '${blog.id}')">
+            ${currentUser && currentUser.email === blog.author ? `
+                <button class="delete-btn" data-id="${blog.id}">
                     <i class="fas fa-trash"></i>
                 </button>
             ` : ''}
@@ -323,35 +363,55 @@ function createBlogCard(blog, isDashboard = false) {
             </div>
             ${isDashboard ? `
                 <div class="blog-actions">
-                    <button onclick="event.stopPropagation(); editBlog('${blog.id}')"><i class="fas fa-edit"></i> Edit</button>
+                    <button class="edit-btn" data-id="${blog.id}"><i class="fas fa-edit"></i> Edit</button>
                 </div>
             ` : ''}
         </div>
     `;
 }
 
-function handleDelete(event, id) {
-    event.preventDefault();
-    event.stopPropagation();
-    deleteBlog(id);
+// Add this function to handle blog card events
+function setupBlogCardEvents() {
+    // Setup delete buttons
+    document.querySelectorAll('.delete-btn').forEach(btn => {
+        btn.addEventListener('click', async (e) => {
+            e.stopPropagation();
+            const blogId = btn.dataset.id;
+            if (confirm('Are you sure you want to delete this blog?')) {
+                try {
+                    await deleteDoc(doc(db, 'blogs', blogId));
+                    if (document.getElementById('dashboard-page').classList.contains('active')) {
+                        showDashboard();
+                    } else {
+                        showHomePage();
+                    }
+                } catch (error) {
+                    console.error('Error deleting blog:', error);
+                    alert('Error deleting blog');
+                }
+            }
+        });
+    });
+
+    // Setup edit buttons
+    document.querySelectorAll('.edit-btn').forEach(btn => {
+        btn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            const blogId = btn.dataset.id;
+            editBlog(blogId);
+        });
+    });
+
+    // Setup blog card clicks
+    document.querySelectorAll('.blog-card').forEach(card => {
+        card.addEventListener('click', () => {
+            const blogId = card.dataset.id;
+            showBlogDetails(blogId);
+        });
+    });
 }
 
-function deleteBlog(id) {
-    if (!confirm('Are you sure you want to delete this blog?')) return;
-    
-    const blogs = JSON.parse(localStorage.getItem('blogs') || '[]');
-    const updatedBlogs = blogs.filter(blog => blog.id !== id);
-    localStorage.setItem('blogs', JSON.stringify(updatedBlogs));
-    
-    // Refresh the current view
-    if (document.getElementById('dashboard-page').classList.contains('active')) {
-        showDashboard();
-    } else {
-        showHomePage();
-    }
-}
-
-function publishBlog(e) {
+async function publishBlog(e) {
     e.preventDefault();
     
     const title = document.getElementById('blog-title').value;
@@ -362,85 +422,96 @@ function publishBlog(e) {
         .filter(tag => tag);
     
     const blog = {
-        id: Date.now().toString(),
         title,
         content,
-        author: currentUser.username,
+        author: currentUser.email,
         date: new Date().toISOString(),
         tags,
         views: 0
     };
     
-    const blogs = JSON.parse(localStorage.getItem('blogs') || '[]');
-    blogs.unshift(blog);
-    localStorage.setItem('blogs', JSON.stringify(blogs));
-    
-    showHomePage();
+    try {
+        await addDoc(collection(db, 'blogs'), blog);
+        showHomePage();
+    } catch (error) {
+        console.error('Error publishing blog:', error);
+        alert('Error publishing blog');
+    }
 }
 
-function editBlog(id) {
-    const blogs = JSON.parse(localStorage.getItem('blogs') || '[]');
-    const blog = blogs.find(b => b.id === id);
-    
-    if (!blog) return;
-    
-    writePage.innerHTML = `
-        <div class="write-container">
-            <h2>Edit Blog</h2>
-            <form id="blog-form">
-                <input type="text" id="blog-title" value="${blog.title}" required>
-                <div id="editor"></div>
-                <div class="tags-container">
-                    <input type="text" id="tag-input" value="${blog.tags.join(', ')}" placeholder="Add tags (comma separated)">
-                </div>
-                <button type="submit">Update</button>
-            </form>
-        </div>
-    `;
-    
-    quill = new Quill('#editor', {
-        theme: 'snow',
-        modules: {
-            toolbar: [
-                ['bold', 'italic', 'underline', 'strike'],
-                ['blockquote', 'code-block'],
-                [{ 'header': 1 }, { 'header': 2 }],
-                [{ 'list': 'ordered'}, { 'list': 'bullet' }],
-                [{ 'script': 'sub'}, { 'script': 'super' }],
-                [{ 'indent': '-1'}, { 'indent': '+1' }],
-                [{ 'direction': 'rtl' }],
-                [{ 'size': ['small', false, 'large', 'huge'] }],
-                [{ 'header': [1, 2, 3, 4, 5, 6, false] }],
-                [{ 'color': [] }, { 'background': [] }],
-                [{ 'font': [] }],
-                [{ 'align': [] }],
-                ['clean'],
-                ['link', 'image']
-            ]
-        }
-    });
-    
-    quill.root.innerHTML = blog.content;
-    
-    document.getElementById('blog-form').addEventListener('submit', (e) => {
-        e.preventDefault();
+async function editBlog(id) {
+    try {
+        const blogDoc = await getDoc(doc(db, 'blogs', id));
+        const blog = { id: blogDoc.id, ...blogDoc.data() };
         
-        const title = document.getElementById('blog-title').value;
-        const content = quill.root.innerHTML;
-        const tags = document.getElementById('tag-input').value
-            .split(',')
-            .map(tag => tag.trim())
-            .filter(tag => tag);
+        if (!blog) return;
         
-        blog.title = title;
-        blog.content = content;
-        blog.tags = tags;
+        writePage.innerHTML = `
+            <div class="write-container">
+                <h2>Edit Blog</h2>
+                <form id="blog-form">
+                    <input type="text" id="blog-title" value="${blog.title}" required>
+                    <div id="editor"></div>
+                    <div class="tags-container">
+                        <input type="text" id="tag-input" value="${blog.tags.join(', ')}" placeholder="Add tags (comma separated)">
+                    </div>
+                    <button type="submit">Update</button>
+                </form>
+            </div>
+        `;
         
-        localStorage.setItem('blogs', JSON.stringify(blogs));
-        showDashboard();
-    });
-    
-    showPage(writePage);
+        quill = new Quill('#editor', {
+            theme: 'snow',
+            modules: {
+                toolbar: [
+                    ['bold', 'italic', 'underline', 'strike'],
+                    ['blockquote', 'code-block'],
+                    [{ 'header': 1 }, { 'header': 2 }],
+                    [{ 'list': 'ordered'}, { 'list': 'bullet' }],
+                    [{ 'script': 'sub'}, { 'script': 'super' }],
+                    [{ 'indent': '-1'}, { 'indent': '+1' }],
+                    [{ 'direction': 'rtl' }],
+                    [{ 'size': ['small', false, 'large', 'huge'] }],
+                    [{ 'header': [1, 2, 3, 4, 5, 6, false] }],
+                    [{ 'color': [] }, { 'background': [] }],
+                    [{ 'font': [] }],
+                    [{ 'align': [] }],
+                    ['clean'],
+                    ['link', 'image']
+                ]
+            }
+        });
+        
+        quill.root.innerHTML = blog.content;
+        
+        document.getElementById('blog-form').addEventListener('submit', async (e) => {
+            e.preventDefault();
+            
+            const title = document.getElementById('blog-title').value;
+            const content = quill.root.innerHTML;
+            const tags = document.getElementById('tag-input').value
+                .split(',')
+                .map(tag => tag.trim())
+                .filter(tag => tag);
+            
+            try {
+                await updateDoc(doc(db, 'blogs', id), {
+                    title,
+                    content,
+                    tags
+                });
+                showDashboard();
+            } catch (error) {
+                console.error('Error updating blog:', error);
+                alert('Error updating blog');
+            }
+        });
+        
+        showPage(writePage);
+    } catch (error) {
+        console.error('Error loading blog for edit:', error);
+        alert('Error loading blog for edit');
+    }
 }
 
 // Search Functionality
@@ -449,28 +520,37 @@ searchInput.addEventListener('keypress', (e) => {
     if (e.key === 'Enter') performSearch();
 });
 
-function performSearch() {
+async function performSearch() {
     const query = searchInput.value.toLowerCase();
-    const blogs = JSON.parse(localStorage.getItem('blogs') || '[]');
-    
-    const filteredBlogs = blogs.filter(blog => 
-        blog.title.toLowerCase().includes(query) ||
-        blog.content.toLowerCase().includes(query) ||
-        blog.tags.some(tag => tag.toLowerCase().includes(query))
-    );
-    
-    const blogsContainer = homePage.querySelector('.blogs-container');
-    blogsContainer.innerHTML = filteredBlogs.map(blog => createBlogCard(blog)).join('');
-    
-    // Add click event listeners to filtered blog cards
-    document.querySelectorAll('.blog-card').forEach(card => {
-        card.addEventListener('click', () => {
-            const blogId = card.dataset.id;
-            showBlogDetails(blogId);
+    try {
+        const blogsSnapshot = await getDocs(collection(db, 'blogs'));
+        const blogs = blogsSnapshot.docs.map(doc => ({
+            id: doc.id,
+            ...doc.data()
+        }));
+        
+        const filteredBlogs = blogs.filter(blog => 
+            blog.title.toLowerCase().includes(query) ||
+            blog.content.toLowerCase().includes(query) ||
+            blog.tags.some(tag => tag.toLowerCase().includes(query))
+        );
+        
+        const blogsContainer = homePage.querySelector('.blogs-container');
+        blogsContainer.innerHTML = filteredBlogs.map(blog => createBlogCard(blog)).join('');
+        
+        // Add click event listeners to filtered blog cards
+        document.querySelectorAll('.blog-card').forEach(card => {
+            card.addEventListener('click', () => {
+                const blogId = card.dataset.id;
+                showBlogDetails(blogId);
+            });
         });
-    });
-    
-    showPage(homePage);
+        
+        showPage(homePage);
+    } catch (error) {
+        console.error('Error searching blogs:', error);
+        alert('Error searching blogs');
+    }
 }
 
 // Initialize
